@@ -1,0 +1,22 @@
+# Keil build outputs
+MDK-ARM/stm32_foc/
+*.o
+*.d
+*.crf
+*.axf
+*.hex
+*.map
+*.htm
+*.lnp
+*.scvd
+
+# Keil user-local files
+*.uvoptx
+*.uvguix.*
+
+# Common generated files
+Debug/
+Release/
+build/
+*.tmp
+*.bak
