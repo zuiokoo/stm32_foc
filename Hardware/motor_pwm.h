@@ -3,11 +3,11 @@
 #define MOTOR_PWM_H
 #include "stm32f4xx_hal.h"
 
-HAL_StatusTypeDef motor1_pwm_start(void);
+HAL_StatusTypeDef motor2_pwm_start(void);
 
-void motor1_pwm_set_duty(float duty_u,float duty_v,float duty_w);
+void motor2_pwm_set_duty(float duty_u,float duty_v,float duty_w);
 
-void motor1_pwm_stop(void);
+void motor2_pwm_stop(void);
       
 
 #endif

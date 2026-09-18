@@ -1,19 +1,19 @@
 #include "motor_pwm.h"
 #include "tim.h"
 
-HAL_StatusTypeDef motor1_pwm_start(void){
+HAL_StatusTypeDef motor2_pwm_start(void){
 
-    motor1_pwm_set_duty(0.5f, 0.5f, 0.5f);
+    motor2_pwm_set_duty(0.5f, 0.5f, 0.5f);
     if(HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_1)!=HAL_OK){
-        motor1_pwm_stop();
+        motor2_pwm_stop();
         return HAL_ERROR;
     }
     if(HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_2)!=HAL_OK){
-        motor1_pwm_stop();
+        motor2_pwm_stop();
         return HAL_ERROR;
     }
     if(HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_3)!=HAL_OK){
-        motor1_pwm_stop();
+        motor2_pwm_stop();
         return HAL_ERROR;
     }
      return HAL_OK;
@@ -34,7 +34,7 @@ static uint32_t duty_to_compare(float duty){
       return (uint32_t)(duty * (float)period);
 
 }
-void motor1_pwm_set_duty(float duty_u,float duty_v,float duty_w){
+void motor2_pwm_set_duty(float duty_u,float duty_v,float duty_w){
 
 
       __HAL_TIM_SET_COMPARE( &htim1, TIM_CHANNEL_1, duty_to_compare(duty_u));
@@ -44,7 +44,7 @@ void motor1_pwm_set_duty(float duty_u,float duty_v,float duty_w){
 
 }
 
-void motor1_pwm_stop(void){
+void motor2_pwm_stop(void){
 
      __HAL_TIM_SET_COMPARE( &htim1, TIM_CHANNEL_1, 0);
      __HAL_TIM_SET_COMPARE( &htim1, TIM_CHANNEL_2, 0);
