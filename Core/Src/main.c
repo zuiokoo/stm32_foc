@@ -114,9 +114,9 @@ vofa_t motor2_vofa;
 uint8_t led1_state=0;
 
 volatile float motor2_openloop_angle = 0.0f;      // 开环电角度
-volatile float motor2_openloop_speed = 50.0f;      // 电角度速度 rad/s
+volatile float motor2_openloop_speed = 0.05f;      // 电角度速度 rad/s
 volatile float motor2_openloop_voltage = 1.0f;    // 开环电压幅值
-volatile uint8_t motor2_openloop_enable = 0;      // 开环使能
+volatile uint8_t motor2_openloop_enable = 1;      // 开环使能
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -203,12 +203,11 @@ int main(void)
   encoder_last_tick = HAL_GetTick();
   motor2_current_init(&motor2_current,0,0);
   motor2_currentsense_calibration_start(&motor2_current);
-  
+
   foc_pi_init(&motor2_pi_d,0.0f,0.0f,-6.0f,6.0f);
   foc_pi_init(&motor2_pi_q,0.0f,0.0f,-6.0f,6.0f);  
   DBG("Init: peripherals started\r\n");
   HAL_ADCEx_InjectedStart_IT(&hadc1);
-  HAL_ADCEx_InjectedStart(&hadc1);   
   HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_4);
 
   /* USER CODE END 2 */
@@ -217,15 +216,27 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    static uint32_t tim_dbg_tick = 0;
-    if((now_tick - tim_dbg_tick) >= 1000){
-    tim_dbg_tick = now_tick;
 
-}
+
+        if (((HAL_GetTick() / 500U) & 1U) != 0U)
+        {
+            motor2_id_ref = 0.2f;
+        }
+        else
+        {
+            motor2_id_ref = 0.0f;
+        }
+
+
+        static uint32_t tim_dbg_tick = 0;
+        if((now_tick - tim_dbg_tick) >= 1000){
+            tim_dbg_tick = now_tick;
+
+        }
 
         motor_cli_poll();
         now_tick = HAL_GetTick();
-      
+
         if((now_tick-led1_last_tick)>=500){
             led1_last_tick=now_tick;
             led1_state = !led1_state;
@@ -239,7 +250,7 @@ int main(void)
                 motor2_angle_valid = 1;
                 motor2_angle_last_ok_tick = now_tick;
 
-               
+
             }
             else{
                 if((now_tick - motor2_angle_last_ok_tick) > 50){
@@ -248,8 +259,8 @@ int main(void)
                         DBG("ENCODER: timeout\r\n");
                 }
             }
-      
-      
+
+
         }
         if(motor2_state != motor2_state_last){
                 DBG("STATE -> %d\r\n", (int)motor2_state);
@@ -262,10 +273,10 @@ int main(void)
                     DBG("Calib done: offset_calibrated=1, motor2_angle_valid=1\r\n");
             }       
         }
-        
+
         if(motor2_state==MOTOR2_STATE_ALIGN){
             if((motor2_align_request !=0)&&(motor2_run_enable == 0)&&(motor2_align_started ==0)){
-            
+
                 motor2_align_request=0;
                 DBG("ALIGN: request accepted\r\n");
                 if (foc_svpwm(MOTOR2_ALIGN_VOLTAGE,0.0f,12.0f,&motor2_duty_u,&motor2_duty_v,&motor2_duty_w) == 0){
@@ -277,19 +288,19 @@ int main(void)
                       DBG("ALIGN: pwm start fail\r\n");
                 }
                 else{
-                
+
                       motor2_pwm_set_duty(motor2_duty_u,motor2_duty_v,motor2_duty_w);
                       motor2_align_start_tick =now_tick;
                       motor2_align_started    =1; 
                       DBG("ALIGN: pwm started\r\n");
 
                 }
-                
+
             }
             if(motor2_align_started!=0){
-                
+
                 if((uint32_t)(now_tick - motor2_align_start_tick)>=500){
-                    
+
                       if (as5600_read_mechanical_angle_rad(&motor2_encoder,&motor2_mechanical_angle_rad) == HAL_OK){
                             motor2_electrical_zero_offset_rad =foc_mechanical_to_electrical_angle(motor2_sensor_direction*motor2_mechanical_angle_rad,7,0.0f);
                             motor2_angle_valid = 1U;
@@ -302,11 +313,11 @@ int main(void)
                       motor2_pwm_stop();
                       motor2_align_started = 0U;  
                       motor2_state=MOTOR2_STATE_READY;
-            
+
                   }
             }
-        
-        
+
+
         }        
         /* OPENLOOP 进入条件 */
         if(motor2_state == MOTOR2_STATE_READY){
@@ -370,8 +381,8 @@ int main(void)
             DBG("VOFA: first frame sent\r\n");
             }
         }
-      
-      
+
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -436,7 +447,7 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc){
     volatile uint16_t adc_a_raw;
     volatile uint16_t adc_b_raw;
     static uint16_t vofa_count = 0;
-    
+
     if(hadc->Instance==ADC1){
         adc_a_raw=(uint16_t)HAL_ADCEx_InjectedGetValue(hadc,ADC_INJECTED_RANK_1);
         adc_b_raw=(uint16_t)HAL_ADCEx_InjectedGetValue(hadc,ADC_INJECTED_RANK_2);
@@ -491,9 +502,9 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc){
                     motor2_vofa.vofa_send_flag=1;
                 }
             }
-        
+
         }
-        
+
         if (foc_svpwm(motor2_v_alpha, motor2_v_beta,12.0f, &motor2_duty_u, &motor2_duty_v, &motor2_duty_w) == 0)
         {
             motor2_fault = 1;
@@ -501,7 +512,7 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc){
         }
         if (((motor2_run_enable != 0U) || (motor2_openloop_enable != 0U)) 
             && (motor2_fault == 0U)){
-            
+
                 motor2_pwm_set_duty(motor2_duty_u, motor2_duty_v, motor2_duty_w);
             }
 
@@ -514,10 +525,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 
 
     if(huart->Instance == USART2){
-        
+
         motor_cli_rx_char(uart2_rx_byte);
         HAL_UART_Receive_IT(&huart2,&uart2_rx_byte,1);
-        
+
     }
 
 

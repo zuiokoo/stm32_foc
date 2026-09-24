@@ -82,7 +82,7 @@ void MX_ADC1_Init(void)
 
   /** Configures for the selected ADC injected channel its corresponding rank in the sequencer and its sample time
   */
-  sConfigInjected.InjectedChannel = ADC_CHANNEL_4;
+  sConfigInjected.InjectedChannel = ADC_CHANNEL_5;
   sConfigInjected.InjectedRank = 1;
   sConfigInjected.InjectedNbrOfConversion = 2;
   sConfigInjected.InjectedSamplingTime = ADC_SAMPLETIME_144CYCLES;
@@ -98,7 +98,7 @@ void MX_ADC1_Init(void)
 
   /** Configures for the selected ADC injected channel its corresponding rank in the sequencer and its sample time
   */
-  sConfigInjected.InjectedChannel = ADC_CHANNEL_5;
+  sConfigInjected.InjectedChannel = ADC_CHANNEL_4;
   sConfigInjected.InjectedRank = 2;
   if (HAL_ADCEx_InjectedConfigChannel(&hadc1, &sConfigInjected) != HAL_OK)
   {

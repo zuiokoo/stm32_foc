@@ -1,7 +1,7 @@
 #MicroXplorer Configuration settings - do not modify
 ADC1.Channel-24\#ChannelRegularConversion=ADC_CHANNEL_9
-ADC1.Channel-25\#ChannelInjectedConversion=ADC_CHANNEL_4
-ADC1.Channel-26\#ChannelInjectedConversion=ADC_CHANNEL_5
+ADC1.Channel-25\#ChannelInjectedConversion=ADC_CHANNEL_5
+ADC1.Channel-26\#ChannelInjectedConversion=ADC_CHANNEL_4
 ADC1.Channel-29\#ChannelRegularConversion=ADC_CHANNEL_15
 ADC1.ExternalTrigConv=ADC_EXTERNALTRIGCONV_T3_TRGO
 ADC1.ExternalTrigInjecConv=ADC_EXTERNALTRIGINJECCONV_T1_CC4

@@ -1,6 +1,6 @@
 #include "vofa.h"
 #include "usart.h"
-
+#include "current.h"
 //extern  volatile  uint8_t vofa_enable;
 //extern  volatile uint8_t vofa_send_flag;
 
@@ -12,7 +12,11 @@ extern  float motor2_iq;
 extern  float motor2_vd;
 extern  float motor2_vq;
 
+extern  float motor2_openloop_angle;
+extern motor2_currentsense_t motor2_current;
 
+
+extern  float motor2_openloop_voltage;
 
 void vofa_init(vofa_t*vofa){
     vofa->vofa_send_flag=0;
@@ -31,16 +35,36 @@ void vofa_send(float*data,uint8_t num){
     
 }
 
-void vofa_capture(float* data)
+//void vofa_capture(float *data)//¿ª»·
+//{
+//    data[0] = motor2_openloop_angle;
+//    data[1] = motor2_current.current_a;
+//    data[2] = motor2_current.current_b;
+//    data[3] = motor2_current.current_c;
+//    data[4] = motor2_id;
+//    data[5] = motor2_iq;
+//    data[6] = motor2_vq;
+//}
+void vofa_capture(float *data)
 {
-    data[0] = motor2_electrical_angle_rad;
-    data[1] = motor2_id_ref;
-    data[2] = motor2_id;
-    data[3] = motor2_iq_ref;
-    data[4] = motor2_iq;
-    data[5] = motor2_vd;
-    data[6] = motor2_vq;
+    data[0] = motor2_id_ref;
+    data[1] = motor2_id;
+    data[2] = motor2_vd;
+    data[3] = motor2_iq;
+    data[4] = motor2_current.current_a;
+    data[5] = motor2_current.current_b;
+    data[6] = motor2_current.current_c;
 }
+//void vofa_capture(float* data)
+//{
+//    data[0] = motor2_electrical_angle_rad;
+//    data[1] = motor2_id_ref;
+//    data[2] = motor2_id;
+//    data[3] = motor2_iq_ref;
+//    data[4] = motor2_iq;
+//    data[5] = motor2_vd;
+//    data[6] = motor2_vq;
+//}
 
 
 

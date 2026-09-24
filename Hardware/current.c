@@ -3,7 +3,14 @@
 #define ADC_MAX_COUNT   4095.0f
 #define SHUNT_RESISTOR  0.005f
 #define AMP_GAIN        50.0f
+
+/* 极性必须与硬件一致：+1.0f 表示电流流入电机时 ADC 读数高于零电流偏置。
+ * 本板 INA240 输出相反，先用 -1.0f 在软件里校正；若改为硬件纠正极性，
+ * 这里必须改回 +1.0f，否则会再反一次。 */
+#define CURRENT_SENSE_SIGN  (-1.0f)
+
 #define CURRENT_OFFSET_SAMPLE_COUNT 1000U
+
 
 
 void motor2_current_init(motor2_currentsense_t *cs,uint16_t offset_a_raw,uint16_t offset_b_raw){
@@ -18,8 +25,12 @@ void motor2_current_init(motor2_currentsense_t *cs,uint16_t offset_a_raw,uint16_
 }
 void motor2_currentsense_update(motor2_currentsense_t *cs,uint16_t adc_a_raw,uint16_t adc_b_raw){
     
-    cs->current_a= (ADC_VREF*(adc_a_raw - cs->offset_a_raw)/ADC_MAX_COUNT)/(SHUNT_RESISTOR*AMP_GAIN);
-    cs->current_b= (ADC_VREF*(adc_b_raw - cs->offset_b_raw)/ADC_MAX_COUNT)/(SHUNT_RESISTOR*AMP_GAIN);
+    cs->current_a = CURRENT_SENSE_SIGN *
+                    (ADC_VREF * ((float)adc_a_raw - (float)cs->offset_a_raw) / ADC_MAX_COUNT) /
+                    (SHUNT_RESISTOR * AMP_GAIN);
+    cs->current_b = CURRENT_SENSE_SIGN *
+                    (ADC_VREF * ((float)adc_b_raw - (float)cs->offset_b_raw) / ADC_MAX_COUNT) /
+                    (SHUNT_RESISTOR * AMP_GAIN);
     cs->current_c= - cs->current_a - cs->current_b;
 }
 

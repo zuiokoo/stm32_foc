@@ -182,6 +182,7 @@ void motor_cli_parse(char*cmd){
         motor2_pi_q.ki=v2;
         cli_enqueue (CLI_TX_PID_OK);
     } 
+
     else if(strcmp(cmd,"STATUS")==0){
         cli_enqueue (CLI_TX_STATUS);
 
