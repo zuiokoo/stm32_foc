@@ -39,6 +39,11 @@ void MX_I2C1_Init(void)
 
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
+  /* 从 400kHz 降到 100kHz：高电平窗口从 1.25us 拉到 5us，给 SDA/SCL 上升沿留 4 倍余量。
+   * 400kHz + 4.7k 上拉 + 十几厘米走线(约 150pF) 的上升时间约 1.6us(10~90%)，
+   * 已超过 400kHz 的高电平窗口；字节中途出错会让从机(AS5600)停在半个字节里
+   * 持续拉住 SDA，之后主控每次调用都在传输开始前失败返回 HAL_BUSY(st=2)，且不自恢复。
+   * 想回到 400kHz，需要把上拉换成 2.2k 并缩短/屏蔽走线。 */
   hi2c1.Init.ClockSpeed = 400000;
   hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
   hi2c1.Init.OwnAddress1 = 0;
@@ -103,6 +108,9 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef* i2cHandle)
     */
     GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
+    /* 板上已有外部上拉，不用内部上拉（内部仅 30~50k，对 I2C 无实质帮助）。
+     * 注意：外部上拉若是 10k，在 100kHz 下已接近边沿上限(规范要求上升时间 ≤1000ns，
+     * 10k × 60pF 约 1.3us 已超标)，400kHz 更是远超(≤300ns)；建议换成 2.2k。 */
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF4_I2C1;

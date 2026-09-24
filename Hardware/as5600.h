@@ -14,5 +14,6 @@ typedef struct {
 void as5600_init(as5600_t * dev,I2C_HandleTypeDef *hi2c );
 HAL_StatusTypeDef  as5600_read_raw(as5600_t * dev,uint16_t *raw_angle);
 HAL_StatusTypeDef  as5600_read_mechanical_angle_rad( as5600_t *dev,float *mechanical_angle_rad);
+uint8_t as5600_bus_recover(as5600_t *dev);
 
 #endif // AS5600_H

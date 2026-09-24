@@ -20,3 +20,12 @@ Release/
 build/
 *.tmp
 *.bak
+
+# J-Link / 构建日志（本机产物）
+MDK-ARM/JLinkLog.txt
+MDK-ARM/JLinkSettings.ini
+MDK-ARM/build_log.txt
+MDK-ARM/flash_log.txt
+
+# 本机调试脚本暂存目录
+.workbuddy/

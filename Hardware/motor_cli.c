@@ -17,11 +17,19 @@ typedef enum {
     CLI_TX_STATUS,
     CLI_TX_PID_OK,
     CLI_TX_REF_OK,
+    CLI_TX_CLEAR_OK,
+    CLI_TX_CAP_OK,
 } cli_tx_msg_t;
 extern UART_HandleTypeDef huart2;
 
 extern volatile uint8_t motor2_align_request;
 extern volatile uint8_t motor2_run_enable;
+extern void motor2_fault_clear(void);          /* 定义在 main.c */
+
+/* ISR RAM 抓取（定义在 main.c）：CAP arm 后，下一次 ID/IQ 给定变化开始记录 */
+extern volatile uint8_t  cap_armed;
+extern volatile uint8_t  cap_filling;
+extern volatile uint16_t cap_n;
 
 
 extern volatile float motor2_id_ref;
@@ -103,6 +111,12 @@ void motor_cli_poll(void)
         case CLI_TX_REF_OK:
             strcpy(buf, "REF OK\r\n");
             break;
+        case CLI_TX_CLEAR_OK:
+            strcpy(buf, "CLEAR OK\r\n");
+            break;
+        case CLI_TX_CAP_OK:
+            strcpy(buf, "CAP ARMED\r\n");
+            break;
         case CLI_TX_HELP:
             strcpy(buf, "CMD:\r\n"
                         "ALIGN\r\n"
@@ -113,6 +127,8 @@ void motor_cli_poll(void)
                         "PID_D kp ki\r\n"
                         "PID_Q kp ki\r\n"
                         "STATUS\r\n"
+                        "CLEAR\r\n"
+                        "CAP\r\n"
                         "VOFA ON\r\n"
                         "VOFA OFF\r\n"
                         "HELP\r\n");
@@ -165,11 +181,13 @@ void motor_cli_parse(char*cmd){
     }
     else if(sscanf(cmd,"ID %f",&v1)==1){
         motor2_id_ref=v1;
+        if(cap_armed){ cap_armed=0; cap_n=0; cap_filling=1; }   /* CAP 后第一次给定变化即开始记录 */
         cli_enqueue(CLI_TX_REF_OK);
     }
     else if(sscanf(cmd,"IQ %f",&v1)==1)
     {
         motor2_iq_ref=v1;
+        if(cap_armed){ cap_armed=0; cap_n=0; cap_filling=1; }
         cli_enqueue(CLI_TX_REF_OK);
     }
     else if(sscanf(cmd,"PID_D %f %f",&v1,&v2)==2){
@@ -185,6 +203,16 @@ void motor_cli_parse(char*cmd){
 
     else if(strcmp(cmd,"STATUS")==0){
         cli_enqueue (CLI_TX_STATUS);
+
+    }
+    else if(strcmp(cmd,"CLEAR")==0){
+        motor2_fault_clear();
+        cli_enqueue (CLI_TX_CLEAR_OK);
+
+    }
+    else if(strcmp(cmd,"CAP")==0){
+        cap_armed = 1;
+        cli_enqueue (CLI_TX_CAP_OK);
 
     }
     else if(strcmp(cmd,"HELP")==0)

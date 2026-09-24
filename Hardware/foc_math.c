@@ -1,6 +1,16 @@
 #include "foc_math.h"
 #include <math.h>
 #define INV_SQRT3 0.57735026919f
+
+/* ---- 电流采样窗口约束（与硬件时序绑定，改 PWM/ADC 配置时必须同步更新）----
+ * PWM    : TIM1 中心对齐，ARR = 2100-1，定时器时钟 84 MHz → 周期 50 us
+ * 注入组 : 2 通道 × 84 周期采样，ADC 时钟 21 MHz
+ *          → 单次转换 (84+12) = 96 周期，两路 192 周期 ≈ 9.1 us
+ *  再留 1.5 us 余量（开关沿、ADC 触发抖动）→ 需要的全低窗口 10.6 us
+ * 详细推导见 foc_svpwm() 中的注释。 */
+#define FOC_PWM_PERIOD_S       (50.0e-6f)
+#define FOC_INJ_WINDOW_NEED_S  (10.6e-6f)
+
 void  foc_clarke_transform(float iu_a,float iv_a,float *i_alpha_a,float *i_beta_a)
 {
 
@@ -76,6 +86,9 @@ uint8_t  foc_svpwm(float v_alpha_v,float v_beta_v,float vbus_v,float *duty_u,flo
     float max_voltage;
     float min_voltage;
     float common_voltage;
+    float span_voltage;
+    float span_limit;
+    float span_scale;
         
     if (vbus_v <= 0.0f)
     {
@@ -106,6 +119,32 @@ uint8_t  foc_svpwm(float v_alpha_v,float v_beta_v,float vbus_v,float *duty_u,flo
     {
         min_voltage = w_voltage;
     }
+
+    /* ---- 低端分流采样窗口限幅 ----
+     * 加共模电压后三相占空比围绕 0.5 对称，所以
+     *     最大占空比 = 0.5 + 跨度/(2·Vbus)，其中 跨度 = max - min
+     * "三路全低"（零矢量）窗口 = (1 - 最大占空比) × PWM周期
+     *                        = (PWM周期/2) × (1 - 跨度/Vbus)
+     * 该窗口必须装得下两路注入转换，于是：
+     *     跨度 ≤ Vbus × (1 - 2·FOC_INJ_WINDOW_NEED_S/FOC_PWM_PERIOD_S)
+     *          ≈ 0.576 × Vbus      （12V 母线 → 6.91V）
+     * 跨度相对于矢量幅值随电角度在 1.5 ~ √3 倍之间变化，故
+     *     等效可用矢量幅值 ≈ 4.6V（跨度为 1.5 倍时）~ 4.0V（跨度为 √3 倍时）
+     * 注意：这里削的是"实际施加"的电压；motor2_vd/vq 仍是 PI 的需求值，
+     * 所以 VOFA 上看 vd/vq 看不出限幅，要观察电流/转速是否还跟得上需求。
+     * 闭环被频繁限幅时，PI 可能积分饱和，届时应把 PI 输出限幅也收到这个上限。 */
+    span_voltage = max_voltage - min_voltage;
+    span_limit = vbus_v * (1.0f - 2.0f * FOC_INJ_WINDOW_NEED_S / FOC_PWM_PERIOD_S);
+    if (span_voltage > span_limit)
+    {
+        span_scale = span_limit / span_voltage;
+        u_voltage *= span_scale;
+        v_voltage *= span_scale;
+        w_voltage *= span_scale;
+        max_voltage *= span_scale;
+        min_voltage *= span_scale;
+    }
+
     common_voltage=-0.5f*(max_voltage +min_voltage);
     u_voltage += common_voltage;
     v_voltage += common_voltage;

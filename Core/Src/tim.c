@@ -90,7 +90,15 @@ void MX_TIM1_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM2;
-  sConfigOC.Pulse = 1900-1;
+  /* CH4 只作注入组 ADC 触发用（无引脚输出）：频率 = PWM 频率。
+   * 两路 84 周期采样共 192 ADC 周期 @21MHz = 9.1us，定时器 84MHz 下为 768 计数。
+   * 取 CCR4 = 1799：
+   *   采样窗 21.4 ~ 30.6us，落在"三路全低"窗口(本工况 14.3 ~ 35.7us)内且靠近中心；
+   *   中心对齐下上下坡各匹配一次，两次间隔 = 2×(2099-1799)/84MHz = 7.1us
+   *   < 9.1us(两路转换时长) -> 第二次触发时 ADC 必忙而被忽略 -> ISR 稳定 20kHz。
+   * （取更靠峰的 1715 时两次匹配正好相隔 9.1us，边界情况下第二次偶尔被接受，
+   *   实测 ISR 变成 ~20.3kHz、采样点也不均匀，故不取。） */
+  sConfigOC.Pulse = 1800-1;
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
   {
     Error_Handler();

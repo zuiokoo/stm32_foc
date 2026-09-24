@@ -45,16 +45,30 @@ void vofa_send(float*data,uint8_t num){
 //    data[5] = motor2_iq;
 //    data[6] = motor2_vq;
 //}
+/* 当前抓取内容（电流环调试用）：
+ *   data[0] id_ref   data[1] id    data[2] vd
+ *   data[3] iq       data[4] vq    data[5] ia   data[6] ib
+ * （编码器方向验证用的 [编码器角度, 开环角度] 版本见下方注释，需要时对调） */
 void vofa_capture(float *data)
 {
-    data[0] = motor2_id_ref;
-    data[1] = motor2_id;
+    data[0] = motor2_iq_ref;
+    data[1] = motor2_iq;
     data[2] = motor2_vd;
-    data[3] = motor2_iq;
+    data[3] = motor2_vq;
     data[4] = motor2_current.current_a;
     data[5] = motor2_current.current_b;
     data[6] = motor2_current.current_c;
 }
+//void vofa_capture(float *data)   // 编码器方向验证版
+//{
+//    data[0] = motor2_electrical_angle_rad;
+//    data[1] = motor2_openloop_angle;
+//    data[2] = motor2_id_ref;
+//    data[3] = motor2_id;
+//    data[4] = motor2_iq;
+//    data[5] = motor2_current.current_a;
+//    data[6] = motor2_current.current_b;
+//}
 //void vofa_capture(float* data)
 //{
 //    data[0] = motor2_electrical_angle_rad;

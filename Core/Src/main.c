@@ -66,6 +66,39 @@ typedef enum
 
 motor2_currentsense_t motor2_current;
 as5600_t motor2_encoder;
+volatile uint32_t motor2_isr_cnt = 0;  
+volatile uint32_t isr_cnt_last=0;
+
+/* ---- 编码器/I2C 诊断：用来区分"真 I2C 故障"和"主循环被堵导致的假超时" ----
+ * attempts/fails : 累计发起读取次数 / 失败次数
+ * consec_fail    : 连续失败次数（判故障只看这个）
+ * last_err       : 最近一次 HAL 返回码 1=HAL_ERROR(NACK) 2=HAL_BUSY 3=HAL_TIMEOUT
+ * gap_try_max    : 两次"发起读取"之间的最大间隔(ms)，大 = 主循环被阻塞过
+ * gap_ok_max     : 两次"成功读取"之间的最大间隔(ms)                              */
+volatile uint32_t motor2_enc_attempts = 0;
+volatile uint32_t motor2_enc_fails = 0;
+volatile uint16_t motor2_enc_consec_fail = 0;
+volatile int32_t  motor2_enc_last_err = 0;
+volatile uint32_t motor2_enc_last_try_tick = 0;
+volatile uint32_t motor2_enc_gap_try_max = 0;
+volatile uint32_t motor2_enc_gap_ok_max = 0;
+volatile uint32_t motor2_enc_recover_cnt = 0;   /* I2C 总线自愈执行次数 */
+
+/* 对齐用暂存量：等转子被磁场拉到位并真正停下来，再锁存零位（见 ALIGN 分支注释） */
+float    motor2_align_last_mech = 0.0f;
+uint8_t  motor2_align_stable_cnt = 0;
+uint32_t motor2_align_read_tick = 0;
+
+/* ---- ISR 内 RAM 抓取（看电流环动态/阶跃响应）----
+ * 用法：先发 CAP 命令 arm；随后"下一次 ID/IQ 给定变化"开始按 ISR 节奏(50us)记录 CAP_N 点，
+ *       填满后主循环把数据以 ASCII 行打入串口（CAP BEGIN / CAP END 包裹，自带标签，无解析歧义）。
+ * 抓取内容：id_ref, iq_ref, id, iq, vd, vq —— 20ms 窗口足够看清 1kHz 环路的上升/超调/振荡。
+ * 注意：dump 会阻塞主循环约 1.7s（期间编码器不更新），所以抓取时转子应锁住/静止。 */
+#define CAP_N 400
+volatile uint8_t  cap_armed = 0;      /* CAP 命令置 1，等给定变化触发 */
+volatile uint8_t  cap_filling = 0;    /* 正在记录 */
+volatile uint16_t cap_n = 0;          /* 已记录点数（>=CAP_N 表示待 dump） */
+float cap_buf[CAP_N][6];
 
 float motor2_electrical_zero_offset_rad = 0.0f;
 int8_t motor2_sensor_direction = 1;
@@ -76,8 +109,8 @@ uint32_t encoder_last_tick;
 uint32_t now_tick;
 static uint32_t led1_last_tick = 0;
 static uint32_t motor2_angle_last_ok_tick = 0;
-static uint32_t motor2_align_start_tick = 0U;   /* ���뿪ʼʱ�� */
-static uint8_t  motor2_align_started    = 0U;   /* �Ƿ����������� */
+static uint32_t motor2_align_start_tick = 0U;   
+static uint8_t  motor2_align_started    = 0U;   
 
 foc_pi_t motor2_pi_d;
 foc_pi_t motor2_pi_q;
@@ -114,9 +147,9 @@ vofa_t motor2_vofa;
 uint8_t led1_state=0;
 
 volatile float motor2_openloop_angle = 0.0f;      // 开环电角度
-volatile float motor2_openloop_speed = 0.05f;      // 电角度速度 rad/s
+volatile float motor2_openloop_speed = 5.0f;      // 电角度速度 rad/s
 volatile float motor2_openloop_voltage = 1.0f;    // 开环电压幅值
-volatile uint8_t motor2_openloop_enable = 1;      // 开环使能
+volatile uint8_t motor2_openloop_enable = 0;      // 开环使能
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -204,8 +237,15 @@ int main(void)
   motor2_current_init(&motor2_current,0,0);
   motor2_currentsense_calibration_start(&motor2_current);
 
-  foc_pi_init(&motor2_pi_d,0.0f,0.0f,-6.0f,6.0f);
-  foc_pi_init(&motor2_pi_q,0.0f,0.0f,-6.0f,6.0f);  
+  /* 电流环 PI 上电默认值（d/q 用同一套：受控对象相同）。
+   * kp = 2, ki = 10000 为实测标定值（20kHz 电流环，dt = 50us）：
+   *   - ki/kp = 0.2ms，正好等于 L/R = 0.68mH / 3.4ohm，做零极点对消；
+   *   - 实测：稳态误差 ~1%，上升 0.25~0.30ms，kp=2 时超调约 25%；
+   *     锁轴验证 vq = 0.34V @ iq = 0.1A 对应 R = 3.4ohm，量纲自洽。
+   * 也可以在运行时用 CLI 改：PID_D kp ki / PID_Q kp ki（掉电丢失）。
+   * 输出限幅 ±6V；实际可用矢量电压由 foc_svpwm 的 span 限幅再压到约 4V。 */
+  foc_pi_init(&motor2_pi_d,2.0f,10000.0f,-6.0f,6.0f);
+  foc_pi_init(&motor2_pi_q,2.0f,10000.0f,-6.0f,6.0f);  
   DBG("Init: peripherals started\r\n");
   HAL_ADCEx_InjectedStart_IT(&hadc1);
   HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_4);
@@ -218,6 +258,10 @@ int main(void)
   {
 
 
+        /* 【已停用】这段 500ms 方波测试给定会覆盖 CLI 的 ID 命令（主循环每轮都写 id_ref），
+         * 导致用 `ID x` 做稳态/阶跃测试时 id_ref 实际在 0/0.2 之间跳变，测出来没有意义。
+         * 需要方波给定做阶跃测试时，再放开它，或用命令面板连续发 ID 0.2 / ID 0。 */
+#if 0
         if (((HAL_GetTick() / 500U) & 1U) != 0U)
         {
             motor2_id_ref = 0.2f;
@@ -226,12 +270,55 @@ int main(void)
         {
             motor2_id_ref = 0.0f;
         }
+#endif
 
 
         static uint32_t tim_dbg_tick = 0;
+        static uint32_t enc_fails_last = 0;
         if((now_tick - tim_dbg_tick) >= 1000){
             tim_dbg_tick = now_tick;
+            /* 诊断怎么看：
+             *   gapTry 大(>500ms)  → 主循环被 UART 发送阻塞过：那段时间根本没发起读取，
+             *                        这种情况属于"假超时"，与 I2C 硬件无关
+             *   fails 持续增长且 st!=0 → I2C 真的在读失败：
+             *                        st=1 NACK(从机没应答/干扰)  2 BUSY  3 TIMEOUT(总线被拉死)
+             *   gapOk 大但没有 fail → 读数一直是成功的，只是间隔被拉长
+             * scl/sda = PB6/PB7 引脚当前实际电平(AF 模式也能读 IDR)：
+             *   两条都=1 → 总线其实是空闲的，那 HAL_BUSY 是外设/句柄状态卡住；
+             *   有一条=0 → 总线被物理拉住（从机没松手 / 上拉不足 / 短路）       */
+            {
+                uint8_t scl_lvl = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_6) == GPIO_PIN_SET) ? 1U : 0U;
+                uint8_t sda_lvl = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) == GPIO_PIN_SET) ? 1U : 0U;
+                DBG("isr=%lu/s enc try=%lu fails=%lu(+%lu) consec=%u st=%ld rc=%lu scl=%u sda=%u gapTry=%lums gapOk=%lums\r\n",
+                    (unsigned long)(motor2_isr_cnt - isr_cnt_last),
+                    (unsigned long)motor2_enc_attempts,
+                    (unsigned long)motor2_enc_fails,
+                    (unsigned long)(motor2_enc_fails - enc_fails_last),
+                    (unsigned)motor2_enc_consec_fail,
+                    (long)motor2_enc_last_err,
+                    (unsigned long)motor2_enc_recover_cnt,
+                    (unsigned)scl_lvl,
+                    (unsigned)sda_lvl,
+                    (unsigned long)motor2_enc_gap_try_max,
+                    (unsigned long)motor2_enc_gap_ok_max);
+            }
+            enc_fails_last = motor2_enc_fails;
+            motor2_enc_gap_try_max = 0;
+            motor2_enc_gap_ok_max = 0;              /* ← 新增 */
+            isr_cnt_last = motor2_isr_cnt;   
+        }
 
+        /* RAM 抓取数据回传（ASCII 带标签，避免二进制解析歧义） */
+        if (cap_n >= CAP_N) {
+            uint16_t k;
+            DBG("CAP BEGIN n=%u\r\n", (unsigned)CAP_N);
+            for (k = 0; k < CAP_N; k++) {
+                DBG("C %u %.4f %.4f %.4f %.4f %.4f %.4f\r\n", (unsigned)k,
+                    cap_buf[k][0], cap_buf[k][1], cap_buf[k][2],
+                    cap_buf[k][3], cap_buf[k][4], cap_buf[k][5]);
+            }
+            DBG("CAP END\r\n");
+            cap_n = 0;
         }
 
         motor_cli_poll();
@@ -244,19 +331,55 @@ int main(void)
             else            LED1_OFF;
         }
         if((now_tick-encoder_last_tick)>=5){
+            HAL_StatusTypeDef enc_st;
+            uint32_t enc_gap;
+
             encoder_last_tick=now_tick;
-            if(as5600_read_mechanical_angle_rad(&motor2_encoder,&motor2_mechanical_angle_rad)==HAL_OK){
+
+            /* 记录"发起读取"的间隔：主循环被 UART 阻塞时不发起读取，这里会变大 */
+            motor2_enc_attempts++;
+            enc_gap = now_tick - motor2_enc_last_try_tick;
+            if(enc_gap > motor2_enc_gap_try_max){ motor2_enc_gap_try_max = enc_gap; }
+            motor2_enc_last_try_tick = now_tick;
+
+            enc_st = as5600_read_mechanical_angle_rad(&motor2_encoder,&motor2_mechanical_angle_rad);
+            if(enc_st==HAL_OK){
                 motor2_electrical_angle_rad =foc_mechanical_to_electrical_angle(motor2_sensor_direction*motor2_mechanical_angle_rad,7,motor2_electrical_zero_offset_rad);
                 motor2_angle_valid = 1;
+                motor2_enc_consec_fail = 0;
+                enc_gap = now_tick - motor2_angle_last_ok_tick;
+                if(enc_gap > motor2_enc_gap_ok_max){ motor2_enc_gap_ok_max = enc_gap; }
                 motor2_angle_last_ok_tick = now_tick;
-
-
             }
             else{
-                if((now_tick - motor2_angle_last_ok_tick) > 50){
+                motor2_enc_fails++;
+                motor2_enc_last_err = (int32_t)enc_st;
+                if(motor2_enc_consec_fail < 0xFFFF){ motor2_enc_consec_fail++; }
+                /* 只在"连败开始"时打印一次，避免真故障时刷屏把主循环彻底堵死 */
+                if(motor2_enc_consec_fail == 1){
+                    DBG("ENC fail st=%ld gap=%lums\r\n",
+                        (long)enc_st,
+                        (unsigned long)(now_tick - motor2_angle_last_ok_tick));
+                }
+                /* 连续失败到第 6 次：先执行一次 I2C 总线自愈。
+                 * st=2(HAL_BUSY) 就是总线被拉住（从机停在半个字节里），
+                 * 不打 9 个时钟永远好不了；自愈成功则下次读取成功、consec_fail 自动清零 */
+                if(motor2_enc_consec_fail == 6){
+                    motor2_enc_recover_cnt++;
+                    DBG("ENC: 6 consec fails (st=%ld) -> I2C bus recover #%lu\r\n",
+                        (long)enc_st, (unsigned long)motor2_enc_recover_cnt);
+                    if(as5600_bus_recover(&motor2_encoder) == 0){
+                        DBG("  -> SCL held low by AS5600/hardware: software cannot fix, power-cycle the AS5600\r\n");
+                    }else{
+                        DBG("  -> SDA stuck: clocked 9 bits\r\n");
+                    }
+                }
+                /* 自愈后仍连续失败到 20 次（≈100ms）才判故障：确实坏透了才停机。
+                 * 只在第 20 次打印一次（fault 一旦置位会保持，不必重复设定） */
+                if(motor2_enc_consec_fail == 20){
                         motor2_angle_valid = 0;
                         motor2_fault = 1;
-                        DBG("ENCODER: timeout\r\n");
+                        DBG("ENCODER: fault (20 consec fails, st=%ld)\r\n", (long)enc_st);
                 }
             }
 
@@ -292,6 +415,9 @@ int main(void)
                       motor2_pwm_set_duty(motor2_duty_u,motor2_duty_v,motor2_duty_w);
                       motor2_align_start_tick =now_tick;
                       motor2_align_started    =1; 
+                      motor2_align_stable_cnt = 0;      /* 复位对齐稳定性判断 */
+                      motor2_align_last_mech  = 0.0f;
+                      motor2_align_read_tick  = 0;
                       DBG("ALIGN: pwm started\r\n");
 
                 }
@@ -299,20 +425,42 @@ int main(void)
             }
             if(motor2_align_started!=0){
 
-                if((uint32_t)(now_tick - motor2_align_start_tick)>=500){
+                /* 不能固定 500ms 读一次就当零位：转子被磁场拉到位后会在 ~19Hz 上欠阻尼振荡，
+                 * 振荡中途读数会让零位偏几十度 -> 之后"纯 d 轴电流"还会推动转子。
+                 * 做法：500ms 之后每 50ms 读一次，连续 3 次(≈150ms)几乎不动才认为稳定并锁存；
+                 *       最长等 3s 兜底。 */
+                if(((uint32_t)(now_tick - motor2_align_start_tick)>=500) &&
+                   ((uint32_t)(now_tick - motor2_align_read_tick) >= 50)){
 
+                      motor2_align_read_tick = now_tick;
                       if (as5600_read_mechanical_angle_rad(&motor2_encoder,&motor2_mechanical_angle_rad) == HAL_OK){
+                            float dmech = motor2_mechanical_angle_rad - motor2_align_last_mech;
+                            if (dmech < 0.0f) { dmech = -dmech; }
+                            if (dmech < 0.005f) { motor2_align_stable_cnt++; }
+                            else                { motor2_align_stable_cnt = 0; }
+                            motor2_align_last_mech = motor2_mechanical_angle_rad;
+
                             motor2_electrical_zero_offset_rad =foc_mechanical_to_electrical_angle(motor2_sensor_direction*motor2_mechanical_angle_rad,7,0.0f);
                             motor2_angle_valid = 1U;
-                            DBG("ALIGN: done, offset=%.3f\r\n", motor2_electrical_zero_offset_rad);
+
+                            if((motor2_align_stable_cnt >= 3) ||
+                               ((uint32_t)(now_tick - motor2_align_start_tick) >= 3000)){
+                                  DBG("ALIGN: done, offset=%.3f (t=%lums)\r\n",
+                                      motor2_electrical_zero_offset_rad,
+                                      (unsigned long)(now_tick - motor2_align_start_tick));
+                                  motor2_pwm_stop();
+                                  motor2_align_started = 0U;
+                                  motor2_align_stable_cnt = 0;
+                                  motor2_state=MOTOR2_STATE_READY;
+                            }
                       }
                       else{               
                             motor2_fault = 1;
                             DBG("ALIGN: encoder read fail\r\n");
+                            motor2_pwm_stop();
+                            motor2_align_started = 0U;
+                            motor2_state = MOTOR2_STATE_FAULT;
                       }
-                      motor2_pwm_stop();
-                      motor2_align_started = 0U;  
-                      motor2_state=MOTOR2_STATE_READY;
 
                   }
             }
@@ -443,11 +591,28 @@ void SystemClock_Config(void)
 
 
 
+/* FAULT 清除：回到 READY，等新的 ALIGN / OPENLOOP / RUN 命令。
+ * 一并清掉 openloop_enable（否则状态机一回 READY 就会自动重进开环），
+ * 并复位编码器连败计数，让下一次运行从干净状态开始。 */
+void motor2_fault_clear(void)
+{
+    motor2_fault = 0;
+    motor2_run_enable = 0;
+    motor2_openloop_enable = 0;
+    motor2_align_request = 0;
+    motor2_align_started = 0;
+    motor2_enc_consec_fail = 0;
+    motor2_state = MOTOR2_STATE_READY;
+    DBG("FAULT cleared -> READY\r\n");
+}
+
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc){
     volatile uint16_t adc_a_raw;
     volatile uint16_t adc_b_raw;
     static uint16_t vofa_count = 0;
 
+     motor2_isr_cnt++;       
+    
     if(hadc->Instance==ADC1){
         adc_a_raw=(uint16_t)HAL_ADCEx_InjectedGetValue(hadc,ADC_INJECTED_RANK_1);
         adc_b_raw=(uint16_t)HAL_ADCEx_InjectedGetValue(hadc,ADC_INJECTED_RANK_2);
@@ -483,6 +648,17 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc){
                 foc_inverse_park_transform(motor2_vd, motor2_vq,
                                motor2_electrical_angle_rad,
                                &motor2_v_alpha, &motor2_v_beta);
+                /* RAM 抓取：CAP 之后的第一次给定变化开始记录（每 50us 一点） */
+                if (cap_filling && (cap_n < CAP_N)) {
+                    cap_buf[cap_n][0] = motor2_id_ref;
+                    cap_buf[cap_n][1] = motor2_iq_ref;
+                    cap_buf[cap_n][2] = motor2_id;
+                    cap_buf[cap_n][3] = motor2_iq;
+                    cap_buf[cap_n][4] = motor2_vd;
+                    cap_buf[cap_n][5] = motor2_vq;
+                    cap_n++;
+                    if (cap_n >= CAP_N) { cap_filling = 0; }
+                }
         }
         else{
                 foc_pi_reset(&motor2_pi_d);
