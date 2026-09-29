@@ -24,7 +24,9 @@ void motor2_current_init(motor2_currentsense_t *cs,uint16_t offset_a_raw,uint16_
     
 }
 void motor2_currentsense_update(motor2_currentsense_t *cs,uint16_t adc_a_raw,uint16_t adc_b_raw){
-    
+    uint8_t i;
+    float sum_a = 0.0f, sum_b = 0.0f, sum_c = 0.0f;
+
     cs->current_a = CURRENT_SENSE_SIGN *
                     (ADC_VREF * ((float)adc_a_raw - (float)cs->offset_a_raw) / ADC_MAX_COUNT) /
                     (SHUNT_RESISTOR * AMP_GAIN);
@@ -32,6 +34,41 @@ void motor2_currentsense_update(motor2_currentsense_t *cs,uint16_t adc_a_raw,uin
                     (ADC_VREF * ((float)adc_b_raw - (float)cs->offset_b_raw) / ADC_MAX_COUNT) /
                     (SHUNT_RESISTOR * AMP_GAIN);
     cs->current_c= - cs->current_a - cs->current_b;
+
+    /* 滤波后的三相（电流环用这个）。注意 offset 标定是整数平均，
+     * 所以原始值必然是 3.22mA 的整数倍；滑动平均的浮点结果才能给出亚 LSB 分辨率。 */
+    if (!cs->lpf_primed)
+    {
+        /* 首次：整段缓冲区都填当前值，避免开机后头 N 个点被 0 拖低 */
+        for (i = 0; i < CURRENT_LPF_N; i++)
+        {
+            cs->lpf_buf[0][i] = cs->current_a;
+            cs->lpf_buf[1][i] = cs->current_b;
+            cs->lpf_buf[2][i] = cs->current_c;
+        }
+        cs->lpf_primed = 1;
+    }
+    else
+    {
+        cs->lpf_buf[0][cs->lpf_idx] = cs->current_a;
+        cs->lpf_buf[1][cs->lpf_idx] = cs->current_b;
+        cs->lpf_buf[2][cs->lpf_idx] = cs->current_c;
+        cs->lpf_idx++;
+        if (cs->lpf_idx >= CURRENT_LPF_N)
+        {
+            cs->lpf_idx = 0;
+        }
+    }
+
+    for (i = 0; i < CURRENT_LPF_N; i++)
+    {
+        sum_a += cs->lpf_buf[0][i];
+        sum_b += cs->lpf_buf[1][i];
+        sum_c += cs->lpf_buf[2][i];
+    }
+    cs->current_a_f = sum_a * (1.0f / (float)CURRENT_LPF_N);
+    cs->current_b_f = sum_b * (1.0f / (float)CURRENT_LPF_N);
+    cs->current_c_f = sum_c * (1.0f / (float)CURRENT_LPF_N);
 }
 
 

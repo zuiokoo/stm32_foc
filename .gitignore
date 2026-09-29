@@ -29,3 +29,8 @@ MDK-ARM/flash_log.txt
 
 # 本机调试脚本暂存目录
 .workbuddy/
+
+# 上位机脚本的临时输出
+__pycache__/
+*.pyc
+Tools/serial/*.csv

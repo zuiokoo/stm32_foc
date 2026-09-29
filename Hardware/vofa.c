@@ -55,9 +55,10 @@ void vofa_capture(float *data)
     data[1] = motor2_iq;
     data[2] = motor2_vd;
     data[3] = motor2_vq;
-    data[4] = motor2_current.current_a;
-    data[5] = motor2_current.current_b;
-    data[6] = motor2_current.current_c;
+    /* 送滤波后的电流（= 电流环实际用的值）；想看原始噪声把 _f 去掉即可 */
+    data[4] = motor2_current.current_a_f;
+    data[5] = motor2_current.current_b_f;
+    data[6] = motor2_current.current_c_f;
 }
 //void vofa_capture(float *data)   // 编码器方向验证版
 //{
